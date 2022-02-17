@@ -35,6 +35,78 @@ public:
         return 8 + 8 + bio.length() + name.length();
 
     }
+
+    // Takes output stream and writes all member variables (not member functions) to it.
+    // Assumes that stream is in binary mode
+    // writes delimiters as well (since ints are 4 bytes on hadoop server
+    // I chose to write size of int * 2 so that ints are 8 bytes)
+    void writeRecord(fstream &indexFile) {
+
+        // Check to see if ints are of the right size (8 bytes)
+        cout << "Size of int: " << sizeof(id) << " byte(s)" << endl;
+        cout << "Size of int should be: " << sizeof(id) * 2 << " byte(s)" << endl;
+        indexFile.write(reinterpret_cast<const char *>(&id), sizeof(id) * 2);
+        indexFile << "~";
+        indexFile << name;
+        indexFile << "~";
+        indexFile << bio;
+        indexFile << "~";
+        indexFile.write(reinterpret_cast<const char *>(&manager_id), sizeof(manager_id) * 2);
+        indexFile << "~";
+
+    }
+};
+
+// This class is mainly for parsing blocks, so it represents an entire
+// block in the index file programmatically, which makes it easy to keep track
+// of 3 blocks + page directory memory limit in main memory (logical block rather than physical
+// block).
+class Block {
+private:
+    const int PAGE_SIZE = 4096;
+
+public:
+    // Logical records in the block
+    vector<Record> records;
+
+    // Keep track of block size for easy way to calculate average utilization of block
+    // to see if we need to increment n
+    int blockSize;
+
+    // Overflow pointer idx value
+    int overflowPtrIdx;
+
+    // Number of records in the block
+    int numRecords;
+
+    // Physical index of the block (offset index to block location in index file)
+    int blockIdx;
+
+    Block() {
+        blockSize = 0;
+        blockIdx = 0;
+    }
+
+    Block(int physIdx) {
+        blockSize = 0;
+        blockIdx = physIdx;
+    }
+
+    // Reads physical block from index file and represents the block logically
+    void readBlock(fstream &inputFile) {
+
+        // First get to physical block in index file with seekp()
+        inputFile.seekp(blockIdx * PAGE_SIZE);
+
+        // All blocks are initialized with overflow pointer and number of records
+        // so we always read these in.
+        inputFile.read(reinterpret_cast<char *>(&overflowPtrIdx), sizeof(overflowPtrIdx));
+        inputFile.read(reinterpret_cast<char *>(&numRecords), sizeof(numRecords));
+
+        // Now read the number of records in the block
+        // FINISH TMR!!!!!!!!!!!!!!!!
+
+    }
 };
 
 
@@ -107,17 +179,37 @@ private:
         return hashVal & ((1 << i) - 1);
     }
 
+    // Initializes a bucket/block
+    // Block format:
+    // overflow pointer (integer offset index to overflow block in index file), number of records, and then
+    // records with delimiters
+    // For creating entirely new buckets, not for overflow blocks in existing bucket
+    void initBucket(fstream &indexFile) {
+
+        // Bucket index is based on number of blocks starting at 0
+        // update numBuckets when creating buckets
+        pageDirectory.push_back(numBuckets++);
+        numBlocks++;
+
+        int overflowIdx = -1;
+        int defaultNumRecords = 0;
+
+        // Pre-write overflow pointer (4 bytes) and number of records (4 byte) to the blocks at the buckets
+        // Default overflow pointer value is -1 (since we don't overflow yet), and number of records is 0 for empty block
+        indexFile.write(reinterpret_cast<const char *>(&overflowIdx), sizeof(overflowIdx));
+        indexFile.write(reinterpret_cast<const char *>(&defaultNumRecords), sizeof(defaultNumRecords));
+
+    }
+
     // Insert new record into index
     void insertRecord(Record record, fstream &indexFile) {
 
         // No records written to index yet
         if (numRecords == 0) {
             // Initialize index with first blocks (start with 2)
-            // Bucket index is based on number of blocks starting at 0
-            // update numBuckets when creating buckets
+            // buckets
             for (int i = 0; i < 2; i++) {
-                pageDirectory.push_back(numBuckets++);
-                numBlocks++;
+                
             }
 
             // 1 bit needed to address 2 buckets/blocks
@@ -136,7 +228,7 @@ private:
         // If value of last i'th bits >= n, then flip MSB from 1 to 0
         // If we need to get non-flipped bucketIdx then just hash the entry again?
         if (bucketIdx >= numBuckets) {
-
+            bucketIdx &= ~(1 << (i-1));
         }
         
         // then insert in index file at the bucket index (pgdir[bucket_idx] gives actual offset idx for index file)
@@ -148,7 +240,9 @@ private:
         // NOTE: PUT CODE TO ITERATE TO EMPTY SPOT IN BLOCK LATER
         // RIGHT NOW IT JUST WRITES IT AT START OF BLOCK
         // Write at that block spot in index file, delimit variable record with '~'
-        indexFile << record.id << "~" << record.name << "~" << record.bio << "~" << record.manager_id << "~";
+        // indexFile << record.id << "~" << record.name << "~" << record.bio << "~" << record.manager_id << "~";
+        record.writeRecord(indexFile);
+        numRecords++;
 
         // Take neccessary steps if capacity is reached
 
@@ -168,7 +262,7 @@ public:
     void createFromFile(string csvFName) {
         
         // Open filestream to index file and another to .csv file
-        fstream indexFile(fName, ios::out | ios::trunc);
+        fstream indexFile(fName, ios::out | ios::trunc | ios::binary);
         fstream inputFile(csvFName, ios::in);
 
         if (inputFile.is_open())
