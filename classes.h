@@ -375,7 +375,7 @@ private:
             else if (currBlock.overflowPtrIdx != -1) {
                 
                 // This means that current block is full, but there exists a linked overflow block
-                cout << "== No space in current block, moving to existing overflow block to check..." << endl;
+                cout << "== No space in current block, moving to existing overflow block at " << currBlock.overflowPtrIdx << " to check..." << endl;
 
                 // Set pgIdx to overflow idx of the current block so that next loop iteration the currBlock
                 // will be the overflow block and we can continue this iteration logic for writing record
@@ -390,12 +390,12 @@ private:
                 // Initialize overflow block and return its physical offset index
                 int overflowIdx = initOverflowBlock(pgIdx, indexFile);
 
-                // Now move to overflow block and write record to 
-                indexFile.seekp(overflowIdx * PAGE_SIZE);
+                // Now move to overflow block and write record after the overflow index and # of records in that block
+                indexFile.seekp((overflowIdx * PAGE_SIZE) + sizeof(int) + sizeof(int));
                 record.writeRecord(indexFile);
 
-                // Update current block's # of records field
-                int newNumRecords = currBlock.numRecords + 1;
+                // Update current block's # of records field (only 1 record after writing current record into overflow block)
+                int newNumRecords = 1;
                 // Move to start of block and jump over 8 bytes of overflow index to write at # of records field
                 indexFile.seekp((overflowIdx * PAGE_SIZE) + sizeof(int));
                 indexFile.write(reinterpret_cast<const char *>(&newNumRecords), sizeof(newNumRecords));
