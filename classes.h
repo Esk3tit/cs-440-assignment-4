@@ -119,10 +119,10 @@ public:
         // Ignore delimeter right after binary int
         inputFile.ignore(1, '~');
 
-        cout << paddedId << endl;
-        cout << name << endl;
-        cout << bio << endl;
-        cout << paddedManagerId << endl;
+        cout << "READ IN: " << paddedId << " " << name << endl;
+        // cout << name << endl;
+        // cout << bio << endl;
+        // cout << paddedManagerId << endl;
 
         int regularId = (int)paddedId;
         int regularManagerId = (int)paddedManagerId;
@@ -135,7 +135,8 @@ public:
     // Reads physical block from index file and represents the block logically
     void readBlock(fstream &inputFile) {
 
-        // First get to physical block in index file with seekp()
+        // First get to physical block in index file with seekg()
+        cout << "READING BLOCK AT PHYS IDX " << blockIdx << endl;
         inputFile.seekg(blockIdx * PAGE_SIZE);
 
         // All blocks are initialized with overflow pointer and number of records
@@ -143,7 +144,7 @@ public:
         inputFile.read(reinterpret_cast<char *>(&overflowPtrIdx), sizeof(overflowPtrIdx));
         inputFile.read(reinterpret_cast<char *>(&numRecords), sizeof(numRecords));
 
-        cout << "\n\n" << "-------------------------------------------" << endl;
+        cout << "\n" << "v-------------------------------------------v" << endl;
 
         cout << "Overflow idx: " << overflowPtrIdx << endl;
         cout << "# of records: " << numRecords << endl;
@@ -164,7 +165,7 @@ public:
 
         }
 
-        cout << "-------------------------------------------" << "\n\n" << endl;
+        cout << "^-------------------------------------------^" << "\n" << endl;
 
     }
 };
@@ -250,14 +251,15 @@ private:
     // overflow pointer (integer offset index to overflow block in index file), number of records, and then
     // records with delimiters
     // For creating entirely new buckets, not for overflow blocks in existing bucket
-    void initBucket(fstream &indexFile) {
+    // Return LOGICAL BUCKET index (not physical offset index!!!!)
+    int initBucket(fstream &indexFile) {
 
         int overflowIdx = -1;
         int defaultNumRecords = 0;
 
         // Pre-write overflow pointer (4 bytes) and number of records (4 byte) to the blocks at the buckets
         // Default overflow pointer value is -1 (since we don't overflow yet), and number of records is 0 for empty block
-        indexFile.seekp(numBuckets * PAGE_SIZE);
+        indexFile.seekp(nextFreePage * PAGE_SIZE);
 
         indexFile.write(reinterpret_cast<const char *>(&overflowIdx), sizeof(overflowIdx));
         indexFile.write(reinterpret_cast<const char *>(&defaultNumRecords), sizeof(defaultNumRecords));
@@ -268,11 +270,14 @@ private:
         // of this function and so we want the latest free block index for the bucket
         // # of bucket probably < # of blocks most of the time, so if we allocate phys idx by # of buckets
         // we would allocate an already used phys idx most likely
-        pageDirectory.push_back(numBlocks++);
+        pageDirectory.push_back(nextFreePage++);
+        numBlocks++;
         numBuckets++;
 
         // Update current total size
         currentTotalSize += sizeof(overflowIdx) + sizeof(defaultNumRecords);
+
+        return pageDirectory.size() - 1;
         
     }
 
@@ -286,8 +291,7 @@ private:
         int defaultNumRecords = 0;
 
         // Get index of current overflow block
-        int currIdx = numBlocks;
-        numBlocks++;
+        int currIdx = nextFreePage++;
 
         // Write boilerplate block info (overflow index to NEXT OVERFLOW BLOCK and # of records)
         // which are initial values since this is fresh overflow block
@@ -304,7 +308,8 @@ private:
         // Update current total size (8 new bytes only, since 4 bytes of the parent are already counted)
         currentTotalSize += sizeof(overflowIdx) + sizeof(defaultNumRecords);
 
-        // Update number of overflow blocks
+        // Update number of overflow blocks and blocks
+        numBlocks++;
         numOverflowBlocks++;
 
         // Return index of current overflow block
@@ -319,11 +324,8 @@ private:
         int defaultNumRecords = 0;
 
         // Get index for current block
-        int currIdx = numBlocks;
-        numBlocks++;
+        int currIdx = nextFreePage++;
 
-        // Write boilerplate block info (overflow index to NEXT OVERFLOW BLOCK and # of records)
-        // which are initial values since this is fresh overflow block
         indexFile.seekp(currIdx * PAGE_SIZE);
 
         indexFile.write(reinterpret_cast<const char *>(&overflowIdx), sizeof(overflowIdx));
@@ -331,6 +333,9 @@ private:
 
         // Update current total size (8 new bytes only, since 4 bytes of the parent are already counted)
         currentTotalSize += sizeof(overflowIdx) + sizeof(defaultNumRecords);
+
+        // Update number of blocks
+        numBlocks++;
 
         return currIdx;
 
@@ -359,16 +364,19 @@ private:
         // Debug print last i'th bits
         cout << "Bucket index: " << bucketIdx << endl;
         cout << "Last " << i << " bit(s): " << bitset<16>(bucketIdx) << endl;
+        
 
         // If value of last i'th bits >= n, then flip MSB from 1 to 0
         // If we need to get non-flipped bucketIdx then just hash the entry again?
         // Deals with virtual/ghost buckets
         if (bucketIdx >= numBuckets) {
+            cout << "Flipped bucket index MSB to 0, # of buckets is: " << numBuckets << endl;
             bucketIdx &= ~(1 << (i-1));
         }
         
         // then insert in index file at the bucket index (pgdir[bucket_idx] gives actual offset idx for index file)
         int pgIdx = pageDirectory[bucketIdx];
+        cout << "Physical offset index of bucket index " << bucketIdx << ": " << pgIdx << endl;
 
         // Use seek to get to index*PAGE_SIZE offset
         indexFile.seekp(pgIdx * PAGE_SIZE);
@@ -397,7 +405,7 @@ private:
             // if there isn't, then create overflow and write record there
             if (currBlock.blockSize + record.calcSize() <= PAGE_SIZE) {
                 
-                cout << "== New size of block after record added: " << currBlock.blockSize + record.calcSize() << endl;
+                cout << "== New size of block after record added: " << currBlock.blockSize + record.calcSize() << "\n" << endl;
 
                 // Record fits completely within block, so write at empty spot
                 // (Move file pointer up to current blockSize and write record there)
@@ -430,7 +438,7 @@ private:
             else {
 
                 // Create overflow since no overflow block exists
-                cout << "== Since the block is now " << currBlock.blockSize + record.calcSize() << " bytes after adding new record, create overflow block instead." << endl;
+                cout << "== Since the block is now " << currBlock.blockSize + record.calcSize() << " bytes after adding new record, create overflow block instead." << "\n" << endl;
 
                 // Initialize overflow block and return its physical offset index
                 int overflowIdx = initOverflowBlock(pgIdx, indexFile);
@@ -466,13 +474,9 @@ private:
         if (avgCapacityPerBucket > 0.7 * PAGE_SIZE) {
 
             // Add a new bucket
-            initBucket(indexFile);
-
             // Note: numBuckets is incremented at this point
             // Find bucket to rehash and move to new bucket
-            // Since numBuckets has already been incremented, the index of new bucket
-            // is numBuckets - 1
-            int newBucketIdx = numBlocks - 1;
+            int newBucketIdx = initBucket(indexFile);
 
             // Now calculate the number of binary digits needed to address the new bucket
             // ex. For third bucket with index 2, we need 2 binary digits to address 3 buckets
@@ -516,6 +520,7 @@ private:
 
                 // Parsed entire block in Block object, so we can cleanup
                 // block by blanking out entire block with asterisks
+                cout << "Cleaning up block at physical index " << oldBlock.blockIdx << endl;
                 indexFile.seekp(oldBlock.blockIdx * PAGE_SIZE);
                 indexFile << string(PAGE_SIZE, '*');
 
@@ -524,12 +529,13 @@ private:
                 numBlocks--;
                 numOverflowBlocks--;
 
-                // Update size and number of records
-                currentTotalSize -= PAGE_SIZE;
+                // Update size and number of records, we "zero" out entire block, but only the block's size
+                // of data is removed
+                currentTotalSize -= oldBlock.blockSize;
                 numRecords -= oldBlock.numRecords;
 
                 // Check each record in old block and determine which record goes to which block
-                for (int i = 0; i < numRecords; i++) {
+                for (int i = 0; i < oldBlock.numRecords; i++) {
 
                     // Consider last digitsToAddrNewBucket number of bits for each record
                     // If it matches the index of the new bucket then move to new bucket's block
@@ -547,20 +553,22 @@ private:
                         while (!hasWrittenRecord) {
 
                             // Read/parse current block that we just indexed to
+                            cout << "=== Reading new bucket ===" << endl;
                             Block currBlock(newBucketBlockPgIdx);
                             currBlock.readBlock(indexFile);
 
                             // Check if current record fits inside current block,
                             // if not then see if there is overflow and check overflow for space
                             // if there isn't, then create overflow and write record there
-                            if (currBlock.blockSize + record.calcSize() <= PAGE_SIZE) {
+                            if (currBlock.blockSize + oldBlock.records[i].calcSize() <= PAGE_SIZE) {
                                 
-                                cout << "== New size of block after record added: " << currBlock.blockSize + record.calcSize() << endl;
+                                cout << "=== SPLIT FUNCTION ===" << endl;
+                                cout << "== New size of block after record added: " << currBlock.blockSize + oldBlock.records[i].calcSize() << endl;
 
                                 // Record fits completely within block, so write at empty spot
                                 // (Move file pointer up to current blockSize and write record there)
                                 indexFile.seekp((newBucketBlockPgIdx * PAGE_SIZE) + currBlock.blockSize);
-                                record.writeRecord(indexFile);
+                                oldBlock.records[i].writeRecord(indexFile);
 
                                 // Update current block's # of records field
                                 int newNumRecords = currBlock.numRecords + 1;
@@ -569,7 +577,7 @@ private:
                                 indexFile.write(reinterpret_cast<const char *>(&newNumRecords), sizeof(newNumRecords));
 
                                 // Update current total size
-                                currentTotalSize += record.calcSize();
+                                currentTotalSize += oldBlock.records[i].calcSize();
 
                                 // Set flag to true because we wrote record
                                 hasWrittenRecord = true;
@@ -578,6 +586,7 @@ private:
                             else if (currBlock.overflowPtrIdx != -1) {
                                 
                                 // This means that current block is full, but there exists a linked overflow block
+                                cout << "=== SPLIT FUNCTION ===" << endl;
                                 cout << "== No space in current block, moving to existing overflow block at " << currBlock.overflowPtrIdx << " to check..." << endl;
 
                                 // Set newBucketBlockPgIdx to overflow idx of the current block so that next loop iteration the currBlock
@@ -588,14 +597,15 @@ private:
                             else {
 
                                 // Create overflow since no overflow block exists
-                                cout << "== Since the block is now " << currBlock.blockSize + record.calcSize() << " bytes after adding new record, create overflow block instead." << endl;
+                                cout << "=== SPLIT FUNCTION ===" << endl;
+                                cout << "== Since the block is now " << currBlock.blockSize + oldBlock.records[i].calcSize() << " bytes after adding new record, create overflow block instead." << endl;
 
                                 // Initialize overflow block and return its physical offset index
                                 int overflowIdx = initOverflowBlock(newBucketBlockPgIdx, indexFile);
 
                                 // Now move to overflow block and write record after the overflow index and # of records in that block
                                 indexFile.seekp((overflowIdx * PAGE_SIZE) + sizeof(int) + sizeof(int));
-                                record.writeRecord(indexFile);
+                                oldBlock.records[i].writeRecord(indexFile);
 
                                 // Update current block's # of records field (only 1 record after writing current record into overflow block)
                                 int newNumRecords = 1;
@@ -604,7 +614,7 @@ private:
                                 indexFile.write(reinterpret_cast<const char *>(&newNumRecords), sizeof(newNumRecords));
 
                                 // Update current total size
-                                currentTotalSize += record.calcSize();
+                                currentTotalSize += oldBlock.records[i].calcSize();
 
                                 // Set flag
                                 hasWrittenRecord = true;
@@ -624,20 +634,22 @@ private:
                         while (!hasWrittenRecord) {
 
                             // Read/parse current block that we just indexed to
+                            cout << "=== Reading new old bucket w/o ghost key ===" << endl;
                             Block currBlock(tempNewOldBlockPgIdx);
                             currBlock.readBlock(indexFile);
 
                             // Check if current record fits inside current block,
                             // if not then see if there is overflow and check overflow for space
                             // if there isn't, then create overflow and write record there
-                            if (currBlock.blockSize + record.calcSize() <= PAGE_SIZE) {
+                            cout << "=== SPLIT FUNCTION ===" << endl;
+                            if (currBlock.blockSize + oldBlock.records[i].calcSize() <= PAGE_SIZE) {
                                 
-                                cout << "== New size of block after record added: " << currBlock.blockSize + record.calcSize() << endl;
+                                cout << "== New size of block after record added: " << currBlock.blockSize + oldBlock.records[i].calcSize() << endl;
 
                                 // Record fits completely within block, so write at empty spot
                                 // (Move file pointer up to current blockSize and write record there)
                                 indexFile.seekp((tempNewOldBlockPgIdx * PAGE_SIZE) + currBlock.blockSize);
-                                record.writeRecord(indexFile);
+                                oldBlock.records[i].writeRecord(indexFile);
 
                                 // Update current block's # of records field
                                 int newNumRecords = currBlock.numRecords + 1;
@@ -646,7 +658,7 @@ private:
                                 indexFile.write(reinterpret_cast<const char *>(&newNumRecords), sizeof(newNumRecords));
 
                                 // Update current total size
-                                currentTotalSize += record.calcSize();
+                                currentTotalSize += oldBlock.records[i].calcSize();
 
                                 // Set flag to true because we wrote record
                                 hasWrittenRecord = true;
@@ -655,6 +667,7 @@ private:
                             else if (currBlock.overflowPtrIdx != -1) {
                                 
                                 // This means that current block is full, but there exists a linked overflow block
+                                cout << "=== SPLIT FUNCTION ===" << endl;
                                 cout << "== No space in current block, moving to existing overflow block at " << currBlock.overflowPtrIdx << " to check..." << endl;
 
                                 // Set tempNewOldBlockPgIdx to overflow idx of the current block so that next loop iteration the currBlock
@@ -665,14 +678,15 @@ private:
                             else {
 
                                 // Create overflow since no overflow block exists
-                                cout << "== Since the block is now " << currBlock.blockSize + record.calcSize() << " bytes after adding new record, create overflow block instead." << endl;
+                                cout << "=== SPLIT FUNCTION ===" << endl;
+                                cout << "== Since the block is now " << currBlock.blockSize + oldBlock.records[i].calcSize() << " bytes after adding new record, create overflow block instead." << endl;
 
                                 // Initialize overflow block and return its physical offset index
                                 int overflowIdx = initOverflowBlock(tempNewOldBlockPgIdx, indexFile);
 
                                 // Now move to overflow block and write record after the overflow index and # of records in that block
                                 indexFile.seekp((overflowIdx * PAGE_SIZE) + sizeof(int) + sizeof(int));
-                                record.writeRecord(indexFile);
+                                oldBlock.records[i].writeRecord(indexFile);
 
                                 // Update current block's # of records field (only 1 record after writing current record into overflow block)
                                 int newNumRecords = 1;
@@ -681,7 +695,7 @@ private:
                                 indexFile.write(reinterpret_cast<const char *>(&newNumRecords), sizeof(newNumRecords));
 
                                 // Update current total size
-                                currentTotalSize += record.calcSize();
+                                currentTotalSize += oldBlock.records[i].calcSize();
 
                                 // Set flag
                                 hasWrittenRecord = true;
@@ -723,6 +737,7 @@ public:
         fName = indexFileName;
         numOverflowBlocks = 0;
         currentTotalSize = 0;
+        nextFreePage = 0;
     }
 
     // Read csv file and add records to the index
